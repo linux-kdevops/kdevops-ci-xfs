@@ -118,7 +118,7 @@ jobs:
           while [[ -f $WATCHDOG_CI_BEGIN ]]; do
             $CI_WATCHDOG
             sleep 5
-          fi
+          done
 
       - name: Get the defined CI test results directories for this repository
         id: results-dirs
