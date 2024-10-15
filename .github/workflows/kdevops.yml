@@ -93,7 +93,31 @@ jobs:
       - name: Run CI tests
         run: |
           cd kdevops
-          make ci-test
+          make ci-test &
+
+      - name: Wait up to 5 minutes for CI watchod test ready notification
+        run: |
+          cd kdevops
+          WATCHDOG_CI_BEGIN="workflows/fstests/.begin"
+          SLEEP_COUNT=0
+          while [[ ! -f $WATCHDOG_CI_BEGIN ]]; then
+            echo "CI test watchdog needs to wait until the test is ready ..."
+            let SLEEP_COUNT=$SLEEP_COUNT+2
+            sleep 2
+            if [[ $SLEEP_COUNT -gt 300 ]]; then
+              echo "Test is taking too long to ramp up"
+              exit 1
+            fi
+          done
+
+      - name: Run CI watchdog
+        run: |
+          cd kdevops
+          CI_WATCHDOG="./scripts/workflows/fstests/fstests_watchdog.py hosts baseline"
+          while [[ -f $WATCHDOG_CI_BEGIN ]]; then
+            $CI_WATCHDOG
+            sleep 5
+          fi
 
       - name: Get the defined CI test results directories for this repository
         id: results-dirs
