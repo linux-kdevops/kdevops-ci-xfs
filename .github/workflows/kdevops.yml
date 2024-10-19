@@ -94,44 +94,39 @@ jobs:
       - name: Run CI tests
         run: |
           cd kdevops
-          make ci-test &
-
-      - name: Wait up to 5 minutes for CI watchod test ready notification
-        run: |
-          cd kdevops
-          WATCHDOG_CI_BEGIN="workflows/fstests/.begin"
-          SLEEP_COUNT=0
-          while [[ ! -f $WATCHDOG_CI_BEGIN ]]; do
-            echo "CI test watchdog needs to wait until the test is ready ..."
-            let SLEEP_COUNT=$SLEEP_COUNT+2
-            sleep 2
-            if [[ $SLEEP_COUNT -gt 300 ]]; then
-              echo "Test is taking too long to ramp up"
-              exit 1
-            fi
-          done
-
-      - name: Run CI watchdog
-        run: |
-          cd kdevops
+          nohup stdbuf -oL bash -c 'make ci-test' > ci.log 2>&1 &
+          echo $! > ci.pid
           CI_WATCHDOG="./scripts/workflows/fstests/fstests_watchdog.py hosts baseline"
-          while [[ -f $WATCHDOG_CI_BEGIN ]]; do
-            $CI_WATCHDOG
-            sleep 5
+          while kill -0 $(cat ci.pid) 2> /dev/null; do
+            $CI_WATCHDOG || echo watchdog barfed
+            sleep 60
           done
+        continue-on-error: true
 
-      - name: Get the defined CI test results directories for this repository
-        id: results-dirs
+      - name: Get the defined CI test results for this repository
+        if: always() # This ensures the step runs even if previous steps failed
         run: |
           cd kdevops
-          make ci-results > results_dirs.txt
+          make journal-dump
+          make ci-results > results.txt
+          sed -i 's|^|kdevops/|' results.txt
+          cat results.txt
+          # XXX: Use kdevops-results-archive to push a tarball as well
 
-      - name: Upload all defined test result directories as artifacts
-        uses: actions/upload-artifact@v3
+      - name: Read results.txt and set environment variable
+        if: always() # This ensures the step runs even if previous steps failed
+        run: |
+          FILE_PATHS=$(cat kdevops/results.txt | tr '\n' '\n')
+          echo "FILE_PATHS<<EOF" >> $GITHUB_ENV
+          echo "$FILE_PATHS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload files listed in results.txt as artifacts
+        if: always() # This ensures the step runs even if previous steps failed
+        uses: actions/upload-artifact@v4
         with:
-          name: ci-results
-          path: |
-            $(cat kdevops/results_dirs.txt | tr '\n' ',')
+          name: kdevops-ci-results
+          path: ${{ env.FILE_PATHS }}
 
       # Ensure make destroy always runs, even on failure
       - name: Run kdevops make destroy
