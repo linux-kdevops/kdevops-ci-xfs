@@ -8,6 +8,38 @@ on:
     branches:
       - '**'
   workflow_dispatch:  # Add this for manual triggering of the workflow
+    inputs:
+      defconfig:
+        description: "Select defconfig"
+        required: false
+        default: ci-default
+        type: choice
+        options:
+          - ci-default
+          - xfs_reflink_4k
+          - xfs_nocrc_4k
+
+      soak:
+        description: "Select soak duration"
+        required: false
+        default: "No soak"
+        type: choice
+        options:
+          - "No soak"
+          - "Low - 30 minutes"
+          - "Mid - 1 hour"
+          - "High - 2.5 hours"
+          - "Pathological - 48 hours"
+
+      tests:
+        description: "Select additional test coverage"
+        required: false
+        default: ci-default-test
+        type: choice
+        options:
+          - "ci-default-test"
+          - "generic/003"
+          - "generic/751"
 
 jobs:
   run-kdevops:
@@ -43,7 +75,12 @@ jobs:
 
       - name: Make sure our repo kdevops defconfig exists
         run: |
-          KDEVOPS_DEFCONFIG=$(echo $(basename ${{ github.repository }}))
+          # Default to "ci-default", use old heuristic if set to "ci-default", and postfix with "-cli" if a custom defconfig is selected
+          if [[ "${{ github.event.inputs.defconfig }}" == "ci-default" ]]; then
+            KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
+          else
+            KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
+          fi
           cd kdevops
           if [[ ! -f defconfigs/$KDEVOPS_DEFCONFIG ]]; then
             echo "kdevops lacks a defconfig for this repository, expected to find: defconfigs/$KDEVOPS_DEFCONFIG"
@@ -54,9 +91,13 @@ jobs:
         run: |
           LINUX_TREE="https://github.com/${{ github.repository }}"
           LINUX_TREE_REF="${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
-          KDEVOPS_DEFCONFIG=$(echo $(basename ${{ github.repository }}))
+          if [[ "${{ github.event.inputs.defconfig }}" == "ci-default" ]]; then
+            KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
+          else
+            KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
+          fi
           KDEVOPS_HOSTS_PREFIX="$(echo ${LINUX_TREE_REF:0:4})"
-          echo Going to use defconfig-$(basename ${{ github.repository }})
+          echo Going to use defconfig-$KDEVOPS_DEFCONFIG
 
           echo "Linux tree:          $LINUX_TREE"
           echo "Linux ref:           $LINUX_TREE_REF"
@@ -69,6 +110,15 @@ jobs:
 
           cd kdevops
           make $KDEVOPS_ARGS
+
+      - name: Set soak duration
+        run: |
+          if [[ "${{ github.event.inputs.soak }}" == "No soak" ]]; then
+            SOAK="No soak"
+          else
+            echo "Custom CLI soaking settings needs some work still"
+            exit 1
+          fi
 
       - name: Run kdevops make
         run: |
@@ -94,8 +144,12 @@ jobs:
       - name: Run CI tests
         run: |
           cd kdevops
-          nohup stdbuf -oL bash -c 'make ci-test' > ci.log 2>&1 &
-          echo $! > ci.pid
+          if [[ "${{ github.event.inputs.tests }}" == "ci-default-test" ]]; then
+            nohup stdbuf -oL bash -c 'make ci-test ${{ github.event.inputs.tests }}' > ci.log 2>&1 &
+            echo $! > ci.pid
+          else
+            nohup stdbuf -oL bash -c 'make ci-test TESTS=${{ github.event.inputs.tests }}' > ci.log 2>&1 &
+          fi
           CI_WATCHDOG="./scripts/workflows/fstests/fstests_watchdog.py hosts baseline"
           while kill -0 $(cat ci.pid) 2> /dev/null; do
             $CI_WATCHDOG || echo watchdog barfed
