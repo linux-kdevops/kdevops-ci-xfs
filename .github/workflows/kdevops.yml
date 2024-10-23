@@ -1,4 +1,4 @@
-name: Run generic kdevops CI runner workflow
+name: Run fstests
 
 on:
   push:
@@ -12,13 +12,12 @@ on:
       defconfig:
         description: "Select defconfig"
         required: false
-        default: ci-default
+        default: "all profiles"
         type: choice
         options:
-          - ci-default
-          - xfs_reflink_4k
-          - xfs_nocrc_4k
-
+          - "all profiles"
+          - "xfs_reflink_4k"
+          - "xfs_nocrc_4k"
       soak:
         description: "Select soak duration"
         required: false
@@ -30,31 +29,86 @@ on:
           - "Mid - 1 hour"
           - "High - 2.5 hours"
           - "Pathological - 48 hours"
-
       tests:
         description: "Select additional test coverage"
         required: false
-        default: ci-default-test
+        default: "all"
         type: choice
         options:
-          - "ci-default-test"
+          - "all"
           - "generic/003"
           - "generic/751"
+          - "custom"
+      custom_tests:
+        description: "Enter custom test(s) (space or comma-separated: 'test1 test2' or 'test1,test2')"
+        required: false
+        type: string
+        default: ""
+      timeout_minutes:
+        description: "Timeout in minutes"
+        required: true
+        default: 21600 # 1 month
+        type: choice
+        options:
+          - 1440 # 1 day
+          - 10080 # 1 week
+          - 20160 #  2 weeks
+          - 43200 # 1 month
+          - 129600 # 3 months
+          - 259200 # 6 months
 
 jobs:
   run-kdevops:
     name: Run kdevops CI on Self-hosted Runner
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 21600  # 1 month
+    timeout-minutes: ${{ fromJson(github.event.inputs.timeout_minutes || '43200') }} # 1 month
     steps:
       - name: Configure git
         run: |
           git config --global --add safe.directory '*'
 
+      - name: Set Linux kdevops development path
+        run: echo "LINUX_KDEVOPS_PATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+
+      - name: Process test selection
+        id: process-tests
+        run: |
+          if [ "${{ github.event.inputs.tests }}" == "custom" ]; then
+            if [ -n "${{ github.event.inputs.custom_tests }}" ]; then
+              # Replace commas with spaces and collapse multiple spaces into single spaces
+              TESTS=$(echo "${{ github.event.inputs.custom_tests }}" | tr ',' ' ' | tr -s ' ')
+              # Trim leading and trailing whitespace
+              TESTS=$(echo "$TESTS" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+              echo "SELECTED_TESTS=$TESTS" >> $GITHUB_ENV
+              echo "Custom tests selected: $TESTS"
+            else
+              echo "No custom tests provided, falling back to all"
+              echo "SELECTED_TESTS="all" >> $GITHUB_ENV
+            fi
+          else
+            echo "SELECTED_TESTS=${{ github.event.inputs.tests }}" >> $GITHUB_ENV
+            echo "Predefined test selected: ${{ github.event.inputs.tests }}"
+          fi
+
       - name: Checkout kdevops
         run: |
           rm -rf kdevops
           git clone /mirror/kdevops.git kdevops
+
+      - name: Make sure our repo kdevops defconfig exists
+        run: |
+          cd kdevops
+          KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig || basename(github.repository) }}"
+          if [[ "${{ github.event.inputs.defconfig }}" != "" && "${{ github.event.inputs.defconfig }}" != "all profiles" ]]; then
+            KDEVOPS_DEFCONFIG="${KDEVOPS_DEFCONFIG}-cli"
+          fi
+
+          if [[ ! -f defconfigs/$KDEVOPS_DEFCONFIG ]]; then
+            echo "kdevops lacks a defconfig for this repository, expected to find: defconfigs/$KDEVOPS_DEFCONFIG"
+            exit 1
+          fi
+
+          echo "KDEVOPS_DEFCONFIG=$KDEVOPS_DEFCONFIG" >> $GITHUB_ENV
 
       - name: Checkout custom branch with delta on kdevops/linux
         run: |
@@ -73,29 +127,10 @@ jobs:
           make defconfig
           make -j$(nproc)
 
-      - name: Make sure our repo kdevops defconfig exists
-        run: |
-          # Default to "ci-default", use old heuristic if set to "ci-default", and postfix with "-cli" if a custom defconfig is selected
-          if [[ "${{ github.event.inputs.defconfig }}" == "ci-default" ]]; then
-            KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
-          else
-            KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
-          fi
-          cd kdevops
-          if [[ ! -f defconfigs/$KDEVOPS_DEFCONFIG ]]; then
-            echo "kdevops lacks a defconfig for this repository, expected to find: defconfigs/$KDEVOPS_DEFCONFIG"
-            exit 1
-          fi
-
       - name: Run kdevops make defconfig-repo
         run: |
           LINUX_TREE="https://github.com/${{ github.repository }}"
           LINUX_TREE_REF="${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
-          if [[ "${{ github.event.inputs.defconfig }}" == "ci-default" ]]; then
-            KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
-          else
-            KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
-          fi
           KDEVOPS_HOSTS_PREFIX="$(echo ${LINUX_TREE_REF:0:4})"
           echo Going to use defconfig-$KDEVOPS_DEFCONFIG
 
@@ -103,22 +138,14 @@ jobs:
           echo "Linux ref:           $LINUX_TREE_REF"
           echo "Runner ID:           ${{ github.run_id }}"
           echo "kdevops host prefix: $KDEVOPS_HOSTS_PREFIX"
+          echo "kdevops defconfig:   defconfig-${{ env.KDEVOPS_DEFCONFIG }}
 
-          KDEVOPS_ARGS="KDEVOPS_HOSTS_PREFIX=$KDEVOPS_HOSTS_PREFIX LINUX_TREE=$LINUX_TREE LINUX_TREE_REF=$LINUX_TREE_REF defconfig-$KDEVOPS_DEFCONFIG"
+          KDEVOPS_ARGS="KDEVOPS_HOSTS_PREFIX=$KDEVOPS_HOSTS_PREFIX LINUX_TREE=$LINUX_TREE LINUX_TREE_REF=$LINUX_TREE_REF defconfig-${{ env.KDEVOPS_DEFCONFIG }}
           echo Going to run:
           echo make $KDEVOPS_ARGS
 
           cd kdevops
           make $KDEVOPS_ARGS
-
-      - name: Set soak duration
-        run: |
-          if [[ "${{ github.event.inputs.soak }}" == "No soak" ]]; then
-            SOAK="No soak"
-          else
-            echo "Custom CLI soaking settings needs some work still"
-            exit 1
-          fi
 
       - name: Run kdevops make
         run: |
@@ -144,11 +171,11 @@ jobs:
       - name: Run CI tests
         run: |
           cd kdevops
-          if [[ "${{ github.event.inputs.tests }}" == "ci-default-test" ]]; then
+          if [[ "${{ env.SELECTED_TESTS }}" == "all" ]]; then
             nohup stdbuf -oL bash -c 'make ci-test ${{ github.event.inputs.tests }}' > ci.log 2>&1 &
             echo $! > ci.pid
           else
-            nohup stdbuf -oL bash -c 'make ci-test TESTS=${{ github.event.inputs.tests }}' > ci.log 2>&1 &
+            nohup stdbuf -oL bash -c 'make fstests-baseline TESTS=${{ env.SELECTED_TESTS }}' > ci.log 2>&1 &
           fi
           CI_WATCHDOG="./scripts/workflows/fstests/fstests_watchdog.py hosts baseline"
           while kill -0 $(cat ci.pid) 2> /dev/null; do
@@ -157,30 +184,30 @@ jobs:
           done
         continue-on-error: true
 
-      - name: Get the defined CI test results for this repository
+      - name: Get systemd journal files
         if: always() # This ensures the step runs even if previous steps failed
         run: |
           cd kdevops
           make journal-dump
-          make ci-results > results.txt
-          sed -i 's|^|kdevops/|' results.txt
-          cat results.txt
-          # XXX: Use kdevops-results-archive to push a tarball as well
 
-      - name: Read results.txt and set environment variable
+      - name: Start SSH Agent
+        if: always()  # Ensure this step runs even if previous steps failed
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Build our kdevops archive results
         if: always() # This ensures the step runs even if previous steps failed
         run: |
-          FILE_PATHS=$(cat kdevops/results.txt | tr '\n' '\n')
-          echo "FILE_PATHS<<EOF" >> $GITHUB_ENV
-          echo "$FILE_PATHS" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          cd kdevops
+          make ci-archive
 
-      - name: Upload files listed in results.txt as artifacts
+      - name: Upload our kdevops results archive
         if: always() # This ensures the step runs even if previous steps failed
         uses: actions/upload-artifact@v4
         with:
           name: kdevops-ci-results
-          path: ${{ env.FILE_PATHS }}
+          path: ${{ env.LINUX_KDEVOPS_PATH }}/kdevops/archive/*.zip
 
       # Ensure make destroy always runs, even on failure
       - name: Run kdevops make destroy
