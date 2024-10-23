@@ -99,7 +99,7 @@ jobs:
         run: |
           cd kdevops
           KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
-          if [[ "${{ github.event.inputs.defconfig }}" == "all profiles" ]] || [[ -z "${{ github.event.inputs.defconfig }}" ]]; then
+          if [[ "${{ github.event.inputs.defconfig }}" == "all profiles" ]] || [[ "${{ github.event.inputs.defconfig }}" == "" ]]; then
             KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
           else
             KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
@@ -140,9 +140,9 @@ jobs:
           echo "Linux ref:           $LINUX_TREE_REF"
           echo "Runner ID:           ${{ github.run_id }}"
           echo "kdevops host prefix: $KDEVOPS_HOSTS_PREFIX"
-          echo "kdevops defconfig:   defconfig-${{ env.KDEVOPS_DEFCONFIG }}
+          echo "kdevops defconfig:   defconfig-${{ env.KDEVOPS_DEFCONFIG }}"
 
-          KDEVOPS_ARGS="KDEVOPS_HOSTS_PREFIX=$KDEVOPS_HOSTS_PREFIX LINUX_TREE=$LINUX_TREE LINUX_TREE_REF=$LINUX_TREE_REF defconfig-${{ env.KDEVOPS_DEFCONFIG }}
+          KDEVOPS_ARGS="KDEVOPS_HOSTS_PREFIX=$KDEVOPS_HOSTS_PREFIX LINUX_TREE=$LINUX_TREE LINUX_TREE_REF=$LINUX_TREE_REF defconfig-${{ env.KDEVOPS_DEFCONFIG }}"
           echo Going to run:
           echo make $KDEVOPS_ARGS
 
