@@ -174,10 +174,11 @@ jobs:
         run: |
           cd kdevops
           if [[ "${{ env.SELECTED_TESTS }}" == "all" ]]; then
-            nohup stdbuf -oL bash -c 'make ci-test ${{ github.event.inputs.tests }}' > ci.log 2>&1 &
+            nohup stdbuf -oL bash -c 'make ci-test' > ci.log 2>&1 &
             echo $! > ci.pid
           else
             nohup stdbuf -oL bash -c 'make fstests-baseline TESTS=${{ env.SELECTED_TESTS }}' > ci.log 2>&1 &
+            echo $! > ci.pid
           fi
           CI_WATCHDOG="./scripts/workflows/fstests/fstests_watchdog.py hosts baseline"
           while kill -0 $(cat ci.pid) 2> /dev/null; do
