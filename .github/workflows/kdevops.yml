@@ -73,8 +73,8 @@ jobs:
       - name: Process test selection
         id: process-tests
         run: |
-          if [ "${{ github.event.inputs.tests }}" == "custom" ]; then
-            if [ -n "${{ github.event.inputs.custom_tests }}" ]; then
+          if [[ "${{ github.event.inputs.tests }}" == "custom" ]]; then
+            if [[ -n "${{ github.event.inputs.custom_tests }}" ]]; then
               # Replace commas with spaces and collapse multiple spaces into single spaces
               TESTS=$(echo "${{ github.event.inputs.custom_tests }}" | tr ',' ' ' | tr -s ' ')
               # Trim leading and trailing whitespace
@@ -83,7 +83,7 @@ jobs:
               echo "Custom tests selected: $TESTS"
             else
               echo "No custom tests provided, falling back to all"
-              echo "SELECTED_TESTS="all" >> $GITHUB_ENV
+              echo "SELECTED_TESTS=all" >> $GITHUB_ENV
             fi
           else
             echo "SELECTED_TESTS=${{ github.event.inputs.tests }}" >> $GITHUB_ENV
@@ -98,9 +98,11 @@ jobs:
       - name: Make sure our repo kdevops defconfig exists
         run: |
           cd kdevops
-          KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig || basename(github.repository) }}"
-          if [[ "${{ github.event.inputs.defconfig }}" != "" && "${{ github.event.inputs.defconfig }}" != "all profiles" ]]; then
-            KDEVOPS_DEFCONFIG="${KDEVOPS_DEFCONFIG}-cli"
+          KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
+          if [[ "${{ github.event.inputs.defconfig }}" == "all profiles" ]] || [[ -z "${{ github.event.inputs.defconfig }}" ]]; then
+            KDEVOPS_DEFCONFIG=$(basename ${{ github.repository }})
+          else
+            KDEVOPS_DEFCONFIG="${{ github.event.inputs.defconfig }}-cli"
           fi
 
           if [[ ! -f defconfigs/$KDEVOPS_DEFCONFIG ]]; then
