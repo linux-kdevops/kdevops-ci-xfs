@@ -47,7 +47,7 @@ on:
       timeout_minutes:
         description: "Timeout in minutes"
         required: true
-        default: 21600 # 1 month
+        default: 43200 # 1 month
         type: choice
         options:
           - 1440 # 1 day
